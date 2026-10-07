@@ -1,0 +1,16 @@
+{
+  "name": "vibeclaude",
+  "description": "Feel every Claude Code lifecycle event through Intiface Central / buttplug.io. Streaming output, edits, tool results, permission prompts and turn completion are mapped to vibration pulses.",
+  "version": "0.1.0",
+  "author": { "name": "transkatgirl" },
+  "types": "./types/index.d.ts",
+  "keywords": ["intiface", "buttplug", "haptics", "hooks"],
+  "userConfig": {
+    "wsAddress": {
+      "type": "string",
+      "title": "Intiface WebSocket address",
+      "description": "Address of the Intiface Central WebSocket server.",
+      "default": "ws://127.0.0.1:12345"
+    }
+  }
+}

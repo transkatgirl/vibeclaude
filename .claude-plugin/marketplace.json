@@ -1,0 +1,11 @@
+{
+  "name": "vibeclaude-local",
+  "owner": { "name": "transkatgirl" },
+  "plugins": [
+    {
+      "name": "vibeclaude",
+      "source": "./",
+      "description": "Claude Code lifecycle events → Intiface Central vibration feedback"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "vibeclaude",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude Code plugin: lifecycle hooks → Intiface Central (buttplug.io) haptic feedback",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "daemon": "node daemon/daemon.mjs",
+    "scan": "node daemon/daemon.mjs scan",
+    "test": "node test/e2e.mjs && claude plugin test ."
+  },
+  "dependencies": {
+    "buttplug": "^5.0.2"
+  },
+  "devDependencies": {
+    "ws": "^8.18.0"
+  }
+}
