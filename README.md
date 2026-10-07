@@ -2,6 +2,8 @@
 
 # VibeClaude
 
+*Vibe coding, taken entirely too literally.*
+
 Use an "extra controller" from [Intiface Central](https://intiface.com/central) and
 [buttplug.io](https://buttplug.io) to connect every Claude Code action deeply with your
 body. A port of [opencode-buttplugio](https://github.com/FurryR/opencode-buttplugio) to
