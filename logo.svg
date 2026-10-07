@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="logo-title">
+  <title id="logo-title">VibeClaude</title>
+  <g transform="translate(200 311) rotate(45)">
+    <rect x="-19" y="-78" width="38" height="50" fill="#BD5D3A"/>
+    <ellipse cx="0" cy="-132" rx="55" ry="63" fill="#D97757"/>
+    <path fill="#D97757" fill-rule="evenodd" d="M-32-10A26 26 0 0 1-6-36H6A26 26 0 0 1 32-10V158A32 32 0 0 1-32 158Z M-8 8a8 8 0 1 0 16 0a8 8 0 1 0-16 0Z M-8 36a8 8 0 1 0 16 0a8 8 0 1 0-16 0Z"/>
+    <g transform="translate(0 -132)" fill="#D97757" stroke="#D97757" stroke-width="7" stroke-linejoin="round">
+      <path transform="rotate(-121)" d="M-4.5-73.5L-11-126.5H11L4.5-73.5Z"/>
+      <path transform="rotate(-92)" d="M-4.5-71.5L-12-146.5H12L4.5-71.5Z"/>
+      <path transform="rotate(-58)" d="M-4.5-73.5L-10-132.5H10L4.5-73.5Z"/>
+      <path transform="rotate(-31)" d="M-4.5-77.5L-12-158.5H12L4.5-77.5Z"/>
+      <path transform="rotate(2)" d="M-4.5-79.5L-11-144.5H11L4.5-79.5Z"/>
+      <path transform="rotate(29)" d="M-4.5-77.5L-12-162.5H12L4.5-77.5Z"/>
+      <path transform="rotate(62)" d="M-4.5-73.5L-10-136.5H10L4.5-73.5Z"/>
+      <path transform="rotate(88)" d="M-4.5-71.5L-12-150.5H12L4.5-71.5Z"/>
+      <path transform="rotate(122)" d="M-4.5-73.5L-11-124.5H11L4.5-73.5Z"/>
+    </g>
+  </g>
+</svg>

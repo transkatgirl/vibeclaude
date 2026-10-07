@@ -1,3 +1,5 @@
+<p align="center"><img src="logo.svg" width="160" alt="VibeClaude logo"></p>
+
 # VibeClaude
 
 Use an "extra controller" from [Intiface Central](https://intiface.com/central) and
