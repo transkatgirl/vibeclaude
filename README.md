@@ -1,8 +1,8 @@
 # VibeClaude
 
-A Claude Code plugin that connects every lifecycle event to your body through
-[Intiface Central](https://intiface.com/central) and [buttplug.io](https://buttplug.io).
-A port of [opencode-buttplugio](https://github.com/FurryR/opencode-buttplugio) to
+Use an "extra controller" from [Intiface Central](https://intiface.com/central) and
+[buttplug.io](https://buttplug.io) to connect every Claude Code action deeply with your
+body. A port of [opencode-buttplugio](https://github.com/FurryR/opencode-buttplugio) to
 Claude Code's function hooks.
 
 ```
@@ -14,8 +14,10 @@ Claude Code ──hooks module──HTTP──▶ daemon ──WebSocket──�
 - Claude Code with function-hooks plugin support (an early-access API; built against 2.1.291)
 - Node.js 22+, as `node` on your `PATH` (the `buttplug` client does not run on older versions)
 - Intiface Central with its WebSocket server running (default `ws://127.0.0.1:12345`)
-- A device with a vibration output, paired in Intiface Central
+- A little desire
 - A comfortable, private setting
+- Some lubricant (optional, but strongly recommended)
+- A vibration-capable "controller", paired in Intiface Central
 
 ## Install
 
@@ -49,7 +51,9 @@ copy, which may not have them (one cloned from a git repository never does). If 
 1. Start Intiface Central and press the server start button.
 2. In Claude Code run `/intiface`.
 3. Select a vibration-capable device from the scan results.
-4. Start coding.
+4. Get comfortable, connect with your device, and slowly adjust to the feeling of becoming
+   one with it.
+5. Start enjoying your coding session.
 
 | Command | Description |
 |---|---|
@@ -64,7 +68,8 @@ nothing in the conversation. All three also work while a turn is running.
 the devices that can vibrate, the selected one marked Connected. Move with the arrows or
 Tab, pick with Enter or a click, leave with Escape.
 
-Nothing plays until a device has been selected. Exactly one device is driven at a time.
+Nothing plays until a device has been selected. Exactly one device is driven at a time:
+it has your undivided attention, and you have its.
 When the first session starts, the plugin connects to Intiface and restores the previously
 selected device when it is available. If Intiface was not running then, each Claude Code
 started later tries again, unless you disconnected with `/intiface-disconnect`. When the
@@ -75,10 +80,14 @@ every open session, as they happen. If the connection is lost the device is dese
 reconnect with `/intiface`. A device that drops off on its own is selected again when it
 comes back.
 
+You can do something else while a turn runs. You do not need to watch the screen: bodily
+pleasure and the haze in your mind will tell you whether the task is complete.
+
 ## What you feel
 
 Every pattern is a constant intensity for a fixed time. Within a session only one plays
-at once: the most recent event wins.
+at once: the most recent event wins, so your body always knows what Claude is doing right
+now.
 
 | What happens | Pattern |
 |---|---|
@@ -86,11 +95,11 @@ at once: the most recent event wins.
 | A response arrives whole, with nothing of it streamed (thinking included) | One 150ms pulse at 0.4 |
 | The model starts writing a tool call | One 120ms pulse at 0.5 |
 | The model starts writing an `Edit`/`Write`/`MultiEdit`/`NotebookEdit` | No pulse: a steady hold at 0.3 for as long as the edit is being written and applied, until it finishes, fails, or asks for permission |
-| A tool call succeeds | One 180ms pulse at 0.7 |
-| A tool call fails, is denied, or is rejected at its prompt | One 280ms pulse at 1.0 |
+| A tool call succeeds | One slow, deep 180ms pulse at 0.7 |
+| A tool call fails, is denied, or is rejected at its prompt | One sudden, sharp 280ms pulse at 1.0 |
 | A todo/task tool completes an item | One pulse at 0.8, replaced at once by the tool's own success pulse |
 | A permission prompt is waiting | Three 90ms pulses at 0.85, a pause, repeating until answered |
-| The turn ends | Three 100ms pulses at 1.0. No notification plugin needed |
+| The turn ends | Three 100ms pulses at 1.0 |
 | The turn is interrupted or fails | Everything stops, then the three pulses of a turn ending |
 | The session ends | Everything stops |
 
@@ -100,6 +109,10 @@ strongest of them, and when that one stops the device goes back to whatever the 
 still playing: a pulse from one session does not cut short an edit hold in another, and
 ending or interrupting one session stops only its own output. A subagent's tool calls
 count as its session's; what a subagent thinks and says is not felt.
+
+Turn completion, permission requests, interruptions, completed todos... you no longer need
+a separate notification plugin. Now you can feel it all with your body, as though Claude
+Code has become one with you.
 
 Three things are approximations, because of what Claude Code tells a plugin:
 
@@ -117,8 +130,9 @@ Three things are approximations, because of what Claude Code tells a plugin:
 - **Tool output.** Nothing reports a command's output as it is printed, so it is not
   felt: a tool's result is its one pulse.
 
-Output stops automatically when you switch devices, end the session, disconnect, lose the
-Intiface connection, or the daemon exits.
+Worn out? Output stops automatically when you switch devices, end the session, disconnect,
+lose the Intiface connection, or the daemon exits. After intense "coding," a rest may be
+in order.
 
 ## Configure
 
@@ -172,6 +186,9 @@ event as it arrives.
 
 ## Try it without hardware
 
+No "controller" on hand? A mock will take its place and stoically print what it would have
+felt:
+
 ```bash
 node test/mock-intiface.mjs 12345      # fake Intiface Central with one device, prints motor level
 npm test                               # the daemon end to end against its own mock, then the hooks module
@@ -195,4 +212,5 @@ There is no telemetry. Nobody will know you used it to push your KPIs far beyond
 
 ## License
 
-MIT. Buttplug and Intiface are trademarks of Nonpolynomial Labs, LLC.
+This project is licensed under the [MIT License](LICENSE). Buttplug and Intiface are
+trademarks of Nonpolynomial Labs, LLC.
