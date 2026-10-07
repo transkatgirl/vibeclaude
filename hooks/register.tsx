@@ -196,9 +196,14 @@ const emit = ($: EngineInterface, event: DaemonEvent) => {
 // The daemon's notices ("Restored …", "Connection to Intiface was lost"),
 // shown as they happen: each request waits at the daemon until there is one.
 
-const pollNotices = async ($: EngineInterface, cursor: string): Promise<void> => {
+// The module outlives a /clear, and each session starts its own poller: only
+// the latest one goes on, or every notice would be shown once per session.
+let poller = 0
+
+const pollNotices = async ($: EngineInterface, cursor: string, generation: number): Promise<void> => {
+  if (generation !== poller) return
   const retry = () => {
-    $.clock.after(NOTICE_RETRY_MS, () => void pollNotices($, cursor))
+    $.clock.after(NOTICE_RETRY_MS, () => void pollNotices($, cursor, generation))
   }
   const target = await getDaemon($)
   if (target === null) return retry()
@@ -210,12 +215,13 @@ const pollNotices = async ($: EngineInterface, cursor: string): Promise<void> =>
       seq: number
       notices: { message: string }[]
     }
+    if (generation !== poller) return
     for (const notice of notices) toast($, notice.message)
     next = `id=${id}&after=${seq}`
   } catch {
     return retry()
   }
-  void pollNotices($, next)
+  void pollNotices($, next, generation)
 }
 
 // Commands -----------------------------------------------------------------
@@ -290,7 +296,7 @@ export const register: Register = (on, options) => {
     const startedAt = await $.clock.now()
     sessionID = await $.session.id()
     emit($, { event: 'session.start' })
-    void pollNotices($, `since=${startedAt}`)
+    void pollNotices($, `since=${startedAt}`, ++poller)
 
     await Promise.all([
       $.command.register({

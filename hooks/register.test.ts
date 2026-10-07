@@ -73,7 +73,7 @@ const world = (on: On, commands: Record<string, unknown> = {}, start = { exitCod
   // Without the session.
   const events = () => sent.map(({ session: _, ...event }): Omit<Sent, 'session'> => event)
 
-  return { sent, toasts, ran, registered, panes, clock, session, gone, events, starts: () => starts }
+  return { sent, toasts, ran, registered, panes, clock, session, gone, events, starts: () => starts, polls: () => polls }
 }
 
 const START = { cwd: '/tmp', surface: 'terminal', isInteractive: true } as const
@@ -311,6 +311,25 @@ test('turns and the end of the session are reported; a /clear goes on under the 
     { session: 'S1', event: 'session.end', reason: 'clear' },
     { session: 'S2', event: 'turn.start' },
   ])
+})
+
+test('after a /clear, notices are still polled for once, not once per session', async ($, on) => {
+  const { clock, session, polls } = world(on)
+  await $.session.start(START)
+  await clock.settle()
+  const before = polls()
+  await clock.advance(20_000)
+  const once = polls() - before
+
+  await $.session.end({ reason: 'clear', sessionId: 'S1', resume: { id: 'S1' } })
+  session.id = 'S2'
+  await $.session.start(START)
+  await clock.settle()
+  const after = polls()
+  await clock.advance(20_000)
+
+  expect(once).toBeGreaterThan(0)
+  expect(polls() - after).toBe(once)
 })
 
 test('connect and disconnect run in the daemon and answer with a toast, not a model turn', async ($, on) => {
