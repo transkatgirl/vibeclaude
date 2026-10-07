@@ -262,8 +262,9 @@ function createLoop(sessionID, engine, isSessionAsking, isCutShortWithTurn, task
 function createSession(sessionID, openEngine, closeEngine) {
   // subagent → its loop, from the first that is heard of it to the end of its run.
   const agentLoops = new Map();
-  // Loops of subagents whose run is over, until what they play last is too.
-  const endedLoops = new Set();
+  // Loops of subagents whose run is over, each with the closing of its
+  // engine, until what they play last is over too.
+  const endedLoops = new Map();
   // What a subagent is thinking, saying and calling, each with its subagent:
   // an event that follows may name only the block or the call.
   const owners = new Map();
@@ -276,9 +277,9 @@ function createSession(sessionID, openEngine, closeEngine) {
   // when another says so.
   const taskStatuses = new Map();
   // subagent → the call that started it, for as long as that call runs: the
-  // subagent is in the foreground till then, and is cut short if the call is.
-  // null once the call is over or the run is, and for a subagent started in
-  // the background. The hooks module says which call it was; a subagent it
+  // subagent is in the foreground till then, is cut short if the call is,
+  // and cuts the call short if its run is. null once the call is over or the
+  // run is, and for a subagent started in the background. The hooks module says which call it was; a subagent it
   // said nothing of (a forked skill's, or one met mid-run) is not here.
   const startedBy = new Map();
   // Subagents cut short with the call that started them, until the end of
@@ -323,8 +324,9 @@ function createSession(sessionID, openEngine, closeEngine) {
     const todos = loop.todoStatuses();
     if (todos.size > 0) agentTodos.set(agent, todos);
     else agentTodos.delete(agent);
-    endedLoops.add(loop);
-    closeEngine(loop.engine).then(() => endedLoops.delete(loop));
+    const closing = closeEngine(loop.engine);
+    endedLoops.set(loop, closing);
+    closing.then(() => endedLoops.delete(loop));
   };
 
   // The calls `isOver` picks out are over. A subagent one of them started
@@ -362,13 +364,19 @@ function createSession(sessionID, openEngine, closeEngine) {
   };
 
   // A subagent's run is over, and its loop with it. The pulse of its result
-  // is the last thing its engine plays.
+  // is the last thing its engine plays. A run cut short while the call that
+  // started it still runs was cut short with the call, whichever end is
+  // heard of first: the call's own result (its failing, or the turn's
+  // ending) is what is felt, as when the call's end comes first.
   const onAgentComplete = (m) => {
     endCalls((call) => owners.get(call) === m.agent, isCutShort(m.reason));
+    const startingCall = startedBy.get(m.agent);
+    const isInForeground = startingCall !== undefined && startingCall !== null;
     if (startedBy.has(m.agent)) startedBy.set(m.agent, null);
     // Cut short with the call that started it: this is the end that was
-    // still to be heard of, and there is nothing left of it to feel.
-    if (cutShort.delete(m.agent) && isCutShort(m.reason)) {
+    // still to be heard of, or the first of the two, and there is nothing
+    // left of it to feel.
+    if ((cutShort.delete(m.agent) || isInForeground) && isCutShort(m.reason)) {
       if (agentLoops.has(m.agent)) endLoop(m.agent, (loop) => loop.dispose());
       return;
     }
@@ -376,19 +384,19 @@ function createSession(sessionID, openEngine, closeEngine) {
   };
 
   const handleEvent = (m) => {
-    if (m.event === 'agent.started') {
-      onAgentStarted(m);
-      return;
-    }
-    if (m.event === 'agent.complete') {
-      onAgentComplete(m);
+    // The run that started or ended is a subagent's. One that names none is
+    // no loop's, the conversation's least of all: its turn is not over.
+    if (m.event === 'agent.started' || m.event === 'agent.complete') {
+      if (m.agent === undefined) return;
+      if (m.event === 'agent.started') onAgentStarted(m);
+      else onAgentComplete(m);
       return;
     }
     // The turn's ending takes the place of a result that is still playing: a
     // subagent's, of a run that ended just before, as the conversation's own.
     // The conversation's calls are over with its turn, said or not.
     if (m.event === 'turn.complete') {
-      for (const loop of endedLoops) loop.dispose();
+      for (const loop of endedLoops.keys()) loop.dispose();
       endCalls((call) => !owners.has(call), isCutShort(m.reason));
     }
     if (m.event === 'tool.finished') endCalls((call) => call === m.id, m.status === 'error');
@@ -403,13 +411,13 @@ function createSession(sessionID, openEngine, closeEngine) {
     if (m.event === 'reasoning.ended' || m.event === 'text.ended' || m.event === 'tool.finished') owners.delete(m.id);
   };
 
-  /** The session is over: stop whatever its loops were playing. Resolves once their engines are closed. */
+  /** The session is over: stop whatever its loops were playing. Resolves once their engines are closed, those of runs that are over included. */
   const dispose = () => {
     // One whose run is over is being closed as it is: stopped, it has nothing left to wait for.
-    for (const loop of endedLoops) loop.dispose();
+    for (const loop of endedLoops.keys()) loop.dispose();
     const loops = [main, ...agentLoops.values()];
     for (const loop of loops) loop.dispose();
-    return Promise.all(loops.map((loop) => closeEngine(loop.engine)));
+    return Promise.all([...endedLoops.values(), ...loops.map((loop) => closeEngine(loop.engine))]);
   };
 
   return { handleEvent, dispose };
