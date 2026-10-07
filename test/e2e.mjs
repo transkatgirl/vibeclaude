@@ -416,9 +416,83 @@ await send({ event: 'turn.complete', reason: 'error' });
 await sleep(700);
 expect('a failed turn ends the same way', same(levels(t), [6, 20, 20, 20]) && stopped(), `(${levels(t)})`);
 
-// Connect / disconnect / restore ------------------------------------------------------
 const cmd = async (body) =>
   (await fetch(url('/cmd'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
+
+// Intensity -----------------------------------------------------------------------
+// One multiplier for the whole daemon, applied to what the sessions mix down to.
+r = await cmd({ cmd: 'intensity' });
+expect('the intensity is 1 until it is set', same(r, { message: 'Intensity is 1' }), `(${JSON.stringify(r)})`);
+r = await cli('intensity', '0.5');
+expect('setting the intensity reports it', r.stdout.includes('Intiface: Intensity set to 0.5'), `(${r.stdout.trim()})`);
+r = await cli('intensity');
+expect('…and asking says what it is', r.stdout.includes('Intiface: Intensity is 0.5'), `(${r.stdout.trim()})`);
+t = Date.now();
+await send({ event: 'tool.started', id: 'n1', tool: 'Bash' });
+await sleep(400);
+expect('a pulse at 0.5 is felt at 0.25 under an intensity of 0.5', same(levels(t), [5]) && stopped(), `(${levels(t)})`);
+
+t = Date.now();
+await send({ event: 'tool.started', id: 'n2', tool: 'Edit' });
+await sleep(200);
+await other({ event: 'session.start' }, { event: 'tool.started', id: 'n3', tool: 'Bash' });
+await sleep(400);
+expect('the strongest session is the one scaled, then the one it goes back to', same(levels(t), [3, 5, 3]) && !stopped(), `(${levels(t)})`);
+await other({ event: 'session.end', reason: 'other' });
+await sleep(200);
+
+t = Date.now();
+await cmd({ cmd: 'intensity', value: 1 });
+await sleep(200);
+expect('a new intensity is felt at once by what is playing', same(levels(t), [6]) && !stopped(), `(${levels(t)})`);
+await cmd({ cmd: 'intensity', value: 0 });
+await sleep(200);
+expect('…an intensity of 0 stops the device', same(levels(t), [6]) && stopped(), `(${levels(t)})`);
+await cmd({ cmd: 'intensity', value: 0.5 });
+await sleep(200);
+expect('…and what is still playing comes back with it', same(levels(t), [6, 3]) && !stopped(), `(${levels(t)})`);
+await send({ event: 'tool.finished', id: 'n2', tool: 'Edit', status: 'completed' });
+await sleep(450);
+expect('…until it is over', same(levels(t), [6, 3, 7]) && stopped(), `(${levels(t)})`);
+
+// A level is the device's it was asked of. Another device selected while the
+// first has not answered: the first's stop is still on its way, and a new
+// intensity does not play on the second what the first was left at.
+mock.setSpareDevicePresent(true);
+mock.setReplyDelay(300);
+await sleep(200);
+await send({ event: 'tool.started', id: 'n4', tool: 'Edit' });
+await sleep(50);
+await cmd({ cmd: 'select', index: 1 });
+await cmd({ cmd: 'intensity', value: 0.5 });
+await sleep(700);
+const strays = mock.outputs.filter((o) => o.device === 1 && !o.stop).map((o) => o.value);
+expect('a new intensity does not play one device\'s level on the one selected after it', strays.length === 0 && stopped(), `(${strays})`);
+mock.setReplyDelay(0);
+await cmd({ cmd: 'select', index: 0 });
+mock.setSpareDevicePresent(false);
+await send({ event: 'tool.finished', id: 'n4', tool: 'Edit', status: 'completed' });
+await sleep(450);
+
+const sentBefore = mock.outputs.length;
+await cmd({ cmd: 'intensity', value: 0.25 });
+await sleep(200);
+expect('with nothing playing, a new intensity sends the device nothing', mock.outputs.length === sentBefore, `(${mock.outputs.length - sentBefore} commands)`);
+for (const value of [1.5, -0.1, null, '0.5']) {
+  r = await cmd({ cmd: 'intensity', value });
+  expect(`an intensity of ${JSON.stringify(value)} is refused`, r.error === 'Intensity must be a number from 0 to 1', `(${JSON.stringify(r)})`);
+}
+r = await cli('intensity', 'loud');
+expect('…and so is one that is not a number', r.code === 1 && r.stderr.includes('Intensity must be a number from 0 to 1'), `(${r.stderr.trim()})`);
+r = await cli('intensity', ' ');
+expect('…while a blank one is none at all: it only asks', r.stdout.includes('Intiface: Intensity is 0.25'), `(${r.stdout.trim()})`);
+r = await cmd({ cmd: 'intensity' });
+expect('…and none of them changes it', same(r, { message: 'Intensity is 0.25' }), `(${JSON.stringify(r)})`);
+// It is left at 0.25 for the daemon that is started after this one.
+const savedIntensity = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))['vibeclaude.intensity'];
+expect('the intensity is persisted', savedIntensity === 0.25, `(${savedIntensity})`);
+
+// Connect / disconnect / restore ------------------------------------------------------
 r = await cmd({ cmd: 'state' });
 expect('the dialog is told the connection and the selection', same(r, { connected: true, selected: 0 }), `(${JSON.stringify(r)})`);
 r = await cmd({ cmd: 'ensure-connected' });
@@ -452,9 +526,14 @@ expect('a waiting session hears of the restored device as it happens', told?.not
 seen = await notices(`id=${told?.id}&after=${told?.seq}`);
 expect('…once', seen.length === 0, `(${seen})`);
 t = Date.now();
-await send({ event: 'session.start' }, { event: 'tool.started', id: 'c1', tool: 'Bash' });
+await send({ event: 'session.start' }, { event: 'tool.started', id: 'c0', tool: 'Bash' });
 await sleep(400);
-expect('…and it plays again', same(levels(t), [10]), `(${levels(t)})`);
+expect('…and it plays again, at the intensity the last daemon was left with', same(levels(t), [3]), `(${levels(t)})`);
+await cmd({ cmd: 'intensity', value: 1 });
+t = Date.now();
+await send({ event: 'tool.started', id: 'c1', tool: 'Bash' });
+await sleep(400);
+expect('…until it is set back', same(levels(t), [10]), `(${levels(t)})`);
 
 // What was still on its way when the session ended does not bring it back.
 t = Date.now();

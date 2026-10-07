@@ -14,6 +14,7 @@ import { findSavedDevice } from './core/DeviceSelection.mjs';
 
 const DEFAULT_SCAN_MS = 3000;
 const SELECTED_DEVICE_KEY = 'vibeclaude.selected-device';
+const INTENSITY_KEY = 'vibeclaude.intensity';
 const SNAPSHOT_OUTPUT_DURATION = 150;
 const SNAPSHOT_OUTPUT_INTENSITY = 0.4;
 // How long an ended session's last stop is given to reach the device.
@@ -23,6 +24,9 @@ const SESSION_FLUSH_MS = 1000;
 const AUTO_CONNECT_RETRY_MS = 5000;
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** What the intensity can be: from 0 (nothing is felt) to 1 (every pattern as strong as it asks to be). */
+const isIntensity = (value) => typeof value === 'number' && value >= 0 && value <= 1;
 
 // Everything that belongs to one Claude Code session. Each session is its own
 // instance of the plugin's engine and handlers, so several Claude Codes can be
@@ -226,6 +230,9 @@ function createSession(sessionID, engine) {
 export function createPlugin({ wsAddress, kv, notify }) {
   const connector = new IntifaceConnector(wsAddress);
   const mixer = new DeviceMixer(connector);
+  // The intensity is the daemon's, not a session's, and the next daemon's too.
+  const savedIntensity = kv.get(INTENSITY_KEY, null);
+  if (isIntensity(savedIntensity)) mixer.intensity = savedIntensity;
   // sessionID → { engine, channel, handleEvent, dispose }
   const sessions = new Map();
   let deviceIndex = null;
@@ -414,6 +421,16 @@ export function createPlugin({ wsAddress, kv, notify }) {
     }
   };
 
+  const getIntensity = () => ({ message: `Intensity is ${mixer.intensity}` });
+
+  /** Every session's output is this much of what its patterns ask for, from now on and at once. */
+  const setIntensity = (value) => {
+    if (!isIntensity(value)) return { error: 'Intensity must be a number from 0 to 1' };
+    mixer.setIntensity(value, deviceIndex);
+    kv.set(INTENSITY_KEY, value);
+    return { message: `Intensity set to ${value}` };
+  };
+
   // Session events -----------------------------------------------------------
 
   const startSession = (sessionID) => {
@@ -476,5 +493,17 @@ export function createPlugin({ wsAddress, kv, notify }) {
     await connector.disconnect();
   };
 
-  return { handleEvent, getState, ensureConnected, scanForDevices, selectDeviceByIndex, connect, disconnect, start, dispose };
+  return {
+    handleEvent,
+    getState,
+    ensureConnected,
+    scanForDevices,
+    selectDeviceByIndex,
+    connect,
+    disconnect,
+    getIntensity,
+    setIntensity,
+    start,
+    dispose,
+  };
 }

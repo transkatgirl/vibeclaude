@@ -5,7 +5,7 @@
 // as `--ws <address>`. State lives in ~/.config/vibeclaude, or in the
 // directory given as `--home <dir>` (the end-to-end test uses that):
 //
-//   state.json    written by the daemon: the last selected device
+//   state.json    written by the daemon: the last selected device, the intensity
 //   daemon.log    the daemon's log
 //   config.json   optional, written by you: { "port": 12350 }
 //

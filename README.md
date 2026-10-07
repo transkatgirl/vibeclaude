@@ -64,9 +64,10 @@ copy, which may not have them (one cloned from a git repository never does). If 
 | `/intiface` | Connect to Intiface, scan, and select a device. |
 | `/intiface-connect` | Connect to the configured Intiface server and go back to the device you last selected, if it is there. |
 | `/intiface-disconnect` | Disconnect and stop all device output. |
+| `/intiface-intensity [0.0-1.0]` | Set how strong everything is, as a multiplier from `0` to `1`. Without a number, says what it is set to. |
 
 The commands run in the plugin itself: they start no model turn, use no tokens, and leave
-nothing in the conversation. All three also work while a turn is running.
+nothing in the conversation. All four also work while a turn is running.
 
 `/intiface` opens a dialog that says what it is doing (Connecting, Scanning) and then lists
 the devices that can vibrate, the selected one marked Connected. Move with the arrows or
@@ -114,6 +115,14 @@ still playing: a pulse from one session does not cut short an edit hold in anoth
 ending or interrupting one session stops only its own output. A subagent's tool calls
 count as its session's; what a subagent thinks and says is not felt.
 
+Too much, or saving yourself for later? `/intiface-intensity 0.5` halves everything. The
+intensity is one multiplier for the whole daemon, applied last: every session plays its
+patterns as the table has them, the strongest is picked, and that is what gets multiplied.
+It starts at `1.0` (every pattern as written), takes effect at once, whatever is playing
+included, and is remembered until you change it. At `0` nothing is felt; anything above
+it still is, since a faint level rounds up to the device's weakest step, never down to
+nothing.
+
 Turn completion, permission requests, interruptions, completed todos... you no longer need
 a separate notification plugin. Now you can feel it all with your body, as though Claude
 Code has become one with you.
@@ -150,7 +159,7 @@ Claude Code asks for the plugin's options when you enable it; change them later 
 A new address takes effect when the daemon next starts: end your sessions, or run
 `node daemon/daemon.mjs stop` and let the next event start it again.
 
-The selected device and `daemon.log` are kept in `~/.config/vibeclaude`. If TCP
+The selected device, the intensity and `daemon.log` are kept in `~/.config/vibeclaude`. If TCP
 port 12350 is taken on your machine, a `config.json` there containing `{ "port": 12351 }`
 moves the daemon.
 
@@ -179,6 +188,7 @@ minutes without activity. It can be driven from a shell too:
 | `node daemon/daemon.mjs scan` | Connect, scan 3s, list vibration-capable devices |
 | `node daemon/daemon.mjs select <index>` | Select a device from the scan |
 | `node daemon/daemon.mjs connect` / `disconnect` | Connect to / disconnect from Intiface |
+| `node daemon/daemon.mjs intensity [value]` | Set the intensity multiplier (`0` to `1`); without a value, print it |
 | `node daemon/daemon.mjs start` | Make sure a daemon is running; print its port |
 | `node daemon/daemon.mjs status` | Is a daemon answering? |
 | `node daemon/daemon.mjs stop` | Stop all output and exit the daemon |

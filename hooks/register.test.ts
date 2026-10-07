@@ -85,7 +85,7 @@ test('a session starts the daemon, registers the commands and shows its notices'
 
   expect(sent).toEqual([{ session: 'S1', event: 'session.start' }])
   expect(toasts).toEqual(['Intiface: Restored Mock Vibe'])
-  expect(registered.sort()).toEqual(['intiface', 'intiface-connect', 'intiface-disconnect'])
+  expect(registered.sort()).toEqual(['intiface', 'intiface-connect', 'intiface-disconnect', 'intiface-intensity'])
 })
 
 test('thinking, text and a tool call are reported as they stream, in order', async ($, on) => {
@@ -348,6 +348,22 @@ test('connect and disconnect run in the daemon and answer with a toast, not a mo
 
   expect(ran).toEqual([{ cmd: 'connect' }, { cmd: 'disconnect' }])
   expect(toasts).toEqual(['Intiface: Connected', 'Intiface: Disconnect failed: Error: no'])
+})
+
+test('/intiface-intensity sends the daemon the number it was given, and asks for the intensity when given none', async ($, on) => {
+  const { toasts, ran, clock } = world(on, { intensity: { message: 'Intensity set to 0.5' } })
+  await $.session.start(START)
+  await clock.settle()
+  toasts.length = 0
+
+  for (const args of [' 0.5 ', '', 'loud']) {
+    const output = await $.command.run({ command: 'intiface-intensity', args, origin: ORIGIN, presentation: PRESENTATION })
+    expect(output.text).toBeUndefined()
+  }
+
+  // What is not a number goes as null: the daemon is the one to refuse it.
+  expect(ran).toEqual([{ cmd: 'intensity', value: 0.5 }, { cmd: 'intensity' }, { cmd: 'intensity', value: null }])
+  expect(toasts).toEqual(Array(3).fill('Intiface: Intensity set to 0.5'))
 })
 
 test('a command that finds the daemon gone starts another and runs there', async ($, on) => {

@@ -226,7 +226,10 @@ const pollNotices = async ($: EngineInterface, cursor: string, generation: numbe
 
 // Commands -----------------------------------------------------------------
 
-const command = async ($: EngineInterface, body: { cmd: string; index?: number }): Promise<CommandReply> => {
+const command = async (
+  $: EngineInterface,
+  body: { cmd: string; index?: number; value?: number },
+): Promise<CommandReply> => {
   const target = await getDaemon($, true)
   if (target === null) return { error: 'The daemon is not running' }
   try {
@@ -314,6 +317,12 @@ export const register: Register = (on, options) => {
         description: 'Disconnect from Intiface and stop all device output',
         immediate: true,
       }),
+      $.command.register({
+        name: 'intiface-intensity',
+        description: 'Set how strong all device output is, from 0 to 1',
+        argumentHint: '[0.0-1.0]',
+        immediate: true,
+      }),
     ])
 
     return next(e)
@@ -373,6 +382,15 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'intiface-disconnect' }, async $ => {
     report($, await command($, { cmd: 'disconnect' }))
+
+    return {}
+  })
+
+  // With no argument it says what the intensity is. One that is not a number
+  // reaches the daemon as null, and is refused there with the rest.
+  on('command.run', { command: 'intiface-intensity' }, async ($, e) => {
+    const text = e.args.trim()
+    report($, await command($, text === '' ? { cmd: 'intensity' } : { cmd: 'intensity', value: Number(text) }))
 
     return {}
   })

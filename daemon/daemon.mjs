@@ -7,6 +7,7 @@
 //   node daemon.mjs select <index>  select a device from the last scan
 //   node daemon.mjs connect         connect to the configured Intiface server
 //   node daemon.mjs disconnect      disconnect and stop all device output
+//   node daemon.mjs intensity [0-1] set how strong all output is; with no value, say how strong
 //   node daemon.mjs status          is a daemon answering on the port?
 //   node daemon.mjs stop            stop all output and exit the daemon
 //
@@ -238,6 +239,8 @@ async function runDaemon() {
         return plugin.connect();
       case 'disconnect':
         return plugin.disconnect();
+      case 'intensity':
+        return m.value === undefined ? plugin.getIntensity() : plugin.setIntensity(m.value);
       default:
         return { error: `unknown command "${m?.cmd}"` };
     }
@@ -442,6 +445,15 @@ switch (mode) {
   case 'disconnect':
     await command({ cmd: mode }, 10_000, ({ message }) => console.log(`Intiface: ${message}`));
     break;
+  case 'intensity': {
+    // With no value (a flag is not one, nor is a blank: Number would read it
+    // as 0), it is asked what the intensity is. One that is not a number is
+    // sent as null, and refused with the rest.
+    const text = process.argv[3]?.trim();
+    const value = !text || text.startsWith('--') ? undefined : Number(text);
+    await command({ cmd: 'intensity', value }, 2000, ({ message }) => console.log(`Intiface: ${message}`));
+    break;
+  }
   case 'status': {
     const up = (await request({ cmd: 'ping' }, 500))?.ok === true;
     console.log(up ? `daemon is running (http 127.0.0.1:${cfg.port})` : 'daemon is not running');
@@ -454,6 +466,6 @@ switch (mode) {
     process.exit(0);
   // eslint-disable-next-line no-fallthrough
   default:
-    console.error(`unknown mode "${mode}". Use: run | start | scan | select | connect | disconnect | status | stop`);
+    console.error(`unknown mode "${mode}". Use: run | start | scan | select | connect | disconnect | intensity | status | stop`);
     process.exit(2);
 }
