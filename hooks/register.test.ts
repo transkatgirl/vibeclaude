@@ -127,41 +127,75 @@ test('thinking, text and a tool call are reported as they stream, in order', asy
   ])
 })
 
-test('withheld thinking is silent and makes the response live; an unstreamed one is a snapshot; a subagent says nothing but its tools', async ($, on) => {
+test('withheld thinking is silent and makes the response live; an unstreamed one is a snapshot', async ($, on) => {
   const { events, clock } = world(on)
   on('turn.step', async function* (_$, e) {
     // Thinking whose text is withheld: the chunks come, empty.
     if (e.turnId === 'T') yield { kind: 'thinking', index: 0, text: '' }
-    if (e.agentId !== undefined) {
-      yield { kind: 'text', index: 0, text: 'from a subagent' }
-      yield { kind: 'tool', index: 1, id: 'toolu_2', name: 'Bash' }
-    }
 
     return { turnId: e.turnId, index: e.index, answer: 'All done.', toolUses: [], stopReason: 'end_turn', usage: null }
   })
   await $.session.start(START)
 
-  for (const agentId of [undefined, 'agent-1']) {
-    const stream = $.turn.step({ turnId: 'T', index: 0, model: 'm', messageCount: 1, agentId })
+  // Nothing of the second one streams at all.
+  for (const turnId of ['T', 'U']) {
+    const stream = $.turn.step({ turnId, index: 0, model: 'm', messageCount: 1 })
     for await (const _ of stream) {
       // read to the end
     }
     await stream.result
   }
-  // Nothing of this one streams at all.
-  const whole = $.turn.step({ turnId: 'U', index: 0, model: 'm', messageCount: 1 })
-  for await (const _ of whole) {
-    // read to the end
-  }
-  await whole.result
   await clock.settle()
 
   expect(events().slice(1)).toEqual([
     { event: 'reasoning.started', id: 'T:0:0' },
     { event: 'reasoning.ended', id: 'T:0:0' },
-    { event: 'tool.input.started', id: 'toolu_2', tool: 'Bash' },
-    { event: 'tool.input.ended', id: 'toolu_2' },
     { event: 'output.snapshot', id: 'U:0:answer' },
+  ])
+})
+
+test('a subagent\'s response is reported like the conversation\'s own, as the subagent\'s', async ($, on) => {
+  const { events, clock } = world(on)
+  on('turn.step', async function* (_$, e) {
+    // Its first response streams; its second arrives whole.
+    if (e.index === 0) {
+      yield { kind: 'thinking', index: 0, text: 'hm' }
+      yield { kind: 'text', index: 1, text: 'Looking' }
+      yield { kind: 'tool', index: 2, id: 'toolu_1', name: 'Bash' }
+      yield { kind: 'stop', stopReason: 'tool_use', usage: null }
+    }
+
+    return { turnId: e.turnId, index: e.index, answer: 'Found it.', toolUses: [], stopReason: 'end_turn', usage: null }
+  })
+  await $.session.start(START)
+
+  // The conversation's own turn has the same id: the two are still told apart.
+  for (const step of [
+    { turnId: 'T', index: 0, agentId: 'agent-1' },
+    { turnId: 'T', index: 1, agentId: 'agent-1' },
+    { turnId: 'T', index: 1 },
+  ]) {
+    const stream = $.turn.step({ model: 'm', messageCount: 1, ...step })
+    for await (const _ of stream) {
+      // read to the end
+    }
+    await stream.result
+  }
+  await $.turn.complete({ answer: 'Found it.', durationMs: 5, isAborted: false, turnId: 'T', agentId: 'agent-1', reason: 'answer' })
+  await clock.settle()
+
+  expect(events().slice(1)).toEqual([
+    { event: 'reasoning.started', id: 'agent-1:T:0:0', agent: 'agent-1' },
+    { event: 'reasoning.delta', id: 'agent-1:T:0:0', chars: 2, agent: 'agent-1' },
+    { event: 'reasoning.ended', id: 'agent-1:T:0:0', agent: 'agent-1' },
+    { event: 'text.started', id: 'agent-1:T:0:1', agent: 'agent-1' },
+    { event: 'text.delta', id: 'agent-1:T:0:1', chars: 7, agent: 'agent-1' },
+    { event: 'text.ended', id: 'agent-1:T:0:1', agent: 'agent-1' },
+    { event: 'tool.input.started', id: 'toolu_1', tool: 'Bash', agent: 'agent-1' },
+    { event: 'tool.input.ended', id: 'toolu_1', agent: 'agent-1' },
+    { event: 'output.snapshot', id: 'agent-1:T:1:answer', agent: 'agent-1' },
+    { event: 'output.snapshot', id: 'T:1:answer' },
+    { event: 'agent.complete', agent: 'agent-1', reason: 'answer' },
   ])
 })
 
@@ -244,9 +278,17 @@ test('a subagent\'s call is still its own when the turn that started it ends', a
   await $.tool.check({ tool: 'Bash', input: { command: 'make' }, tool_use_id: 'b1', agentId: 'agent-1' })
   await $.tool.check({ tool: 'Bash', input: { command: 'ls' }, tool_use_id: 'm1' })
   await $.turn.complete({ answer: '', durationMs: 5, isAborted: false, turnId: 'T', reason: 'answer' })
-  // The main loop's call is forgotten with its turn; the subagent's is asked about after it.
+  // The main loop's call is forgotten with its turn; the subagent's is asked about after it,
+  // and its prompt and the answer are the subagent's as the call is.
   await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'ls' } })
   await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'make' } })
+  const pill = await $.ui.mount({
+    plugin: 'vibeclaude',
+    surface: 'terminal',
+    component: 'ToolProgress',
+    props: { tool_use_id: 'b1', kind: 'background_hint', hint: '(ctrl+b to run in background)' },
+  })
+  await pill.unmount()
   answerPrompt()
   await call
   await clock.settle()
@@ -255,8 +297,9 @@ test('a subagent\'s call is still its own when the turn that started it ends', a
     { event: 'turn.start' },
     { event: 'tool.started', id: 'b1', tool: 'Bash', agent: 'agent-1' },
     { event: 'turn.complete', reason: 'answer' },
-    { event: 'permission.asked', id: 'b1' },
-    { event: 'tool.finished', id: 'b1', tool: 'Bash', status: 'completed' },
+    { event: 'permission.asked', id: 'b1', agent: 'agent-1' },
+    { event: 'permission.replied', id: 'b1', agent: 'agent-1' },
+    { event: 'tool.finished', id: 'b1', tool: 'Bash', status: 'completed', agent: 'agent-1' },
   ])
 })
 
@@ -277,9 +320,24 @@ test('a subagent\'s call that never says it finished is over when the subagent\'
 
   expect(events().slice(1)).toEqual([
     { event: 'tool.started', id: 'b1', tool: 'Bash', agent: 'agent-1' },
-    { event: 'agent.complete', agent: 'agent-2' },
-    { event: 'agent.complete', agent: 'agent-1' },
+    { event: 'agent.complete', agent: 'agent-2', reason: 'answer' },
+    { event: 'agent.complete', agent: 'agent-1', reason: 'aborted' },
   ])
+})
+
+test('a subagent\'s start is reported with the call that started it', async ($, on) => {
+  const { events, clock } = world(on)
+  on('agent.spawn', (_$, e) => (e.prompt === 'no' ? { deny: 'refused' } : { model: 'm', agentId: 'agent-1' }))
+  await $.session.start(START)
+
+  // The engine says which call a spawn belongs to; here the test does.
+  const from = (tool_use_id: string) => ({ tool_use_id })
+  await $.agent.spawn({ prompt: 'Read README.md.', ...from('a1') })
+  // One that was refused started nothing.
+  await $.agent.spawn({ prompt: 'no', ...from('a2') })
+  await clock.settle()
+
+  expect(events().slice(1)).toEqual([{ event: 'agent.started', agent: 'agent-1', id: 'a1' }])
 })
 
 test('a daemon that will not start is said once, and tried again less and less often', async ($, on) => {
@@ -306,7 +364,7 @@ test('turns and the end of the session are reported; a /clear goes on under the 
 
   expect(sent.slice(1)).toEqual([
     { session: 'S1', event: 'turn.start' },
-    { session: 'S1', event: 'agent.complete', agent: 'agent-1' },
+    { session: 'S1', event: 'agent.complete', agent: 'agent-1', reason: 'answer' },
     { session: 'S1', event: 'turn.complete', reason: 'aborted' },
     { session: 'S1', event: 'session.end', reason: 'clear' },
     { session: 'S2', event: 'turn.start' },

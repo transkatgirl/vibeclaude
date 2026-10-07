@@ -25,7 +25,13 @@ export class CompletionHandler {
     this.engine.stopSource('completion');
   }
 
+  /** True from the first pulse to the end of the last. */
+  isPlaying() {
+    return this.timer !== null || this.engine.activeSource === 'completion';
+  }
+
   playBurst(pulse) {
+    this.timer = null;
     this.engine.play({
       source: 'completion',
       intensity: PULSE_INTENSITY,

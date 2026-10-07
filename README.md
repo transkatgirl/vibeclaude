@@ -90,9 +90,9 @@ pleasure and the haze in your mind will tell you whether the task is complete.
 
 ## What you feel
 
-Every pattern is a constant intensity for a fixed time. Within a session only one plays
-at once: the most recent event wins, so your body always knows what Claude is doing right
-now.
+Every pattern is a constant intensity for a fixed time. Within a conversation only one
+plays at once: the most recent event wins, so your body always knows what Claude is doing
+right now.
 
 | What happens | Pattern |
 |---|---|
@@ -103,25 +103,39 @@ now.
 | A tool call succeeds | One slow, deep 180ms pulse at 0.7 |
 | A tool call fails, is denied, or is rejected at its prompt | One sudden, sharp 280ms pulse at 1.0 |
 | A todo/task tool completes an item | One pulse at 0.8, replaced at once by the tool's own success pulse |
-| A permission prompt is waiting | Three 90ms pulses at 0.85, a pause, repeating until answered |
+| A subagent's run ends | The pulse of a tool call succeeding; of one failing if the run was interrupted or failed |
+| A permission prompt is waiting | Three 90ms pulses at 0.85, a pause, repeating until answered. Thinking and text are not felt meanwhile |
 | The turn ends | Three 100ms pulses at 1.0 |
-| The turn is interrupted or fails | Everything stops, then the three pulses of a turn ending |
+| The turn is interrupted or fails | Everything of the turn's stops, then the three pulses of a turn ending |
 | The session ends | Everything stops |
 
 Every Claude Code session you have open drives the device, each keeping track of its own
 tool calls, permission prompts and todos. When more than one is playing you feel the
 strongest of them, and when that one stops the device goes back to whatever the others are
 still playing: a pulse from one session does not cut short an edit hold in another, and
-ending or interrupting one session stops only its own output. A subagent's tool calls
-count as its session's; what a subagent thinks and says is not felt.
+ending or interrupting one session stops only its own output.
+
+A subagent is felt like the conversation that started it: its thinking and text as they
+stream, a response that arrives whole, its tool calls, its permission prompts and its
+todos. It is mixed with that conversation, and with any other subagent at work, the way
+another session is: you feel the strongest of them, and a pulse from one does not cut
+short an edit hold, or the pulses of the turn ending, in another. The end of a subagent's
+run is not the end of the turn: it is felt as a tool call's result, and for a subagent in
+the foreground it lands together with the result of the call that started it. One that
+is interrupted with its turn is felt as the turn ending, whose three pulses take the place
+of its result. One in the background plays on after the turn has ended or been
+interrupted, until its own run does; ending the session stops them all. While a permission
+prompt waits, thinking and text are held back in the whole of its session, so that
+whatever else is still streaming does not fill the pauses that give the prompt its rhythm;
+tool calls and edit holds still come through.
 
 Too much, or saving yourself for later? `/intiface-intensity 0.5` halves everything. The
-intensity is one multiplier for the whole daemon, applied last: every session plays its
-patterns as the table has them, the strongest is picked, and that is what gets multiplied.
-It starts at `1.0` (every pattern as written), takes effect at once, whatever is playing
-included, and is remembered until you change it. At `0` nothing is felt; anything above
-it still is, since a faint level rounds up to the device's weakest step, never down to
-nothing.
+intensity is one multiplier for the whole daemon, applied last: every session and subagent
+plays its patterns as the table has them, the strongest is picked, and that is what gets
+multiplied. It starts at `1.0` (every pattern as written), takes effect at once, whatever
+is playing included, and is remembered until you change it. At `0` nothing is felt;
+anything above it still is, since a faint level rounds up to the device's weakest step,
+never down to nothing.
 
 Turn completion, permission requests, interruptions, completed todos... you no longer need
 a separate notification plugin. Now you can feel it all with your body, as though Claude
@@ -167,7 +181,8 @@ moves the daemon.
 
 `hooks/register.tsx` is a hooks module: it runs inside Claude Code, where it sees the
 model's response as it streams (`turn.step`), each tool call from start to finish
-(`tool.call`), permission checks, and turns and sessions beginning and ending. It reduces
+(`tool.call`), permission checks, subagents being started (`agent.spawn`), and turns and
+sessions beginning and ending, in the conversation and in each subagent's own loop. It reduces
 each to a tiny event (sizes and identifiers, not text) and posts them, in order, to the
 daemon on `127.0.0.1:12350`. It never makes the model's stream wait for a request. It also
 registers the slash commands, draws the `/intiface` dialog and shows the daemon's notices

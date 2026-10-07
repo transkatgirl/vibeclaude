@@ -74,6 +74,20 @@ function startDaemon() {
 /** Vibrate levels (out of 20) the device was sent since `since`, stops excluded. */
 const levels = (since) => mock.outputs.filter((o) => o.t >= since && !o.stop).map((o) => o.value);
 const stopped = () => Boolean(mock.outputs.at(-1)?.stop);
+/**
+ * What the device played since `since`, as { value, ms } in order, a stop
+ * being 0. A level it was sent again (one channel of the mixer changed
+ * beneath a stronger one) is the same stretch going on.
+ */
+const stretches = (since) => {
+  const played = [];
+  for (const o of mock.outputs.filter((output) => output.t >= since)) {
+    const value = o.stop ? 0 : o.value;
+    if (played.at(-1)?.value !== value) played.push({ value, t: o.t });
+  }
+  return played.map(({ value, t }, i) => ({ value, ms: (played[i + 1]?.t ?? Date.now()) - t }));
+};
+const felt = (since) => stretches(since).map((stretch) => stretch.value);
 let failures = 0;
 function expect(name, cond, detail = '') {
   console.log(`${cond ? 'PASS' : 'FAIL'}  ${name} ${detail}`);
@@ -328,7 +342,7 @@ await sleep(700);
 t = Date.now();
 await sleep(1200);
 expect('…but a subagent\'s goes on asking: it may run on in the background', levels(t).includes(17), `(${levels(t)})`);
-await send({ event: 'tool.finished', id: 'a4e', tool: 'Bash', status: 'error' });
+await send({ event: 'tool.finished', id: 'a4e', tool: 'Bash', status: 'error', agent: 'agent-1' });
 await sleep(450);
 t = Date.now();
 await sleep(1200);
@@ -340,12 +354,12 @@ await send(
   { event: 'tool.started', id: 'a4g', tool: 'Edit', agent: 'agent-1' },
 );
 await sleep(400);
-await send({ event: 'agent.complete', agent: 'agent-2' });
+await send({ event: 'agent.complete', agent: 'agent-2', reason: 'answer' });
 await sleep(700);
 t = Date.now();
 await sleep(1200);
 expect('another subagent\'s run ending leaves it asking', levels(t).includes(17), `(${levels(t)})`);
-await send({ event: 'agent.complete', agent: 'agent-1' });
+await send({ event: 'agent.complete', agent: 'agent-1', reason: 'aborted' });
 await sleep(450);
 t = Date.now();
 await sleep(1200);
@@ -415,6 +429,255 @@ await sleep(200);
 await send({ event: 'turn.complete', reason: 'error' });
 await sleep(700);
 expect('a failed turn ends the same way', same(levels(t), [6, 20, 20, 20]) && stopped(), `(${levels(t)})`);
+
+// Subagents -----------------------------------------------------------------------
+// What a subagent thinks and says is felt like the conversation's own, but is
+// the subagent's: it goes on past the turn that started it, and ends with its
+// run. It plays on a channel of its own, mixed with the conversation's and
+// the other subagents' as another session's is.
+const says = (id, agent, chars = 4) => ({ event: 'text.delta', id, chars, agent });
+t = Date.now();
+await send({ event: 'text.started', id: 'q1', agent: 'agent-1' });
+for (let i = 0; i < 8; i++) {
+  await send(says('q1', 'agent-1'));
+  await sleep(100);
+}
+stream = levels(t);
+expect('a subagent\'s text pulses as it streams', stream.length >= 6 && stream.every((v) => v >= 7 && v <= 16), `(${stream})`);
+
+t = Date.now();
+await send({ event: 'turn.complete', reason: 'answer' });
+for (let i = 0; i < 16; i++) {
+  await send(says('q1', 'agent-1'));
+  await sleep(30);
+}
+await sleep(300);
+const ending = stretches(t).filter((stretch) => stretch.value === 20);
+expect(
+  'the turn ending is felt whole over a subagent that is still talking',
+  ending.length === 3 && ending.every((stretch) => stretch.ms >= 80),
+  `(${stretches(t).map((stretch) => `${stretch.value} for ${stretch.ms}ms`).join(', ')})`,
+);
+const between = felt(t).slice(felt(t).indexOf(20), felt(t).lastIndexOf(20));
+expect('…which is felt between its pulses', between.some((v) => v >= 7 && v <= 16), `(${felt(t)})`);
+t = Date.now();
+for (let i = 0; i < 4; i++) {
+  await send(says('q1', 'agent-1'));
+  await sleep(100);
+}
+stream = levels(t);
+expect('…and the subagent is felt on after it', stream.length >= 3 && stream.every((v) => v >= 7 && v <= 16), `(${stream})`);
+
+t = Date.now();
+await send({ event: 'agent.complete', agent: 'agent-1', reason: 'answer' });
+await sleep(450);
+expect('a subagent\'s run ending is felt as a tool call succeeding', same(levels(t), [14]) && stopped(), `(${levels(t)})`);
+t = Date.now();
+await send({ event: 'agent.complete', agent: 'agent-1', reason: 'aborted' });
+await sleep(500);
+expect('…or failing, when the run was interrupted', same(levels(t), [20]) && stopped(), `(${levels(t)})`);
+
+// The strongest of a session's loops is felt, and the rest when it stops.
+t = Date.now();
+await send({ event: 'tool.started', id: 'q4', tool: 'Edit' });
+await sleep(200);
+await send({ event: 'tool.started', id: 'q5', tool: 'Bash', agent: 'agent-3' });
+await sleep(400);
+expect('a subagent\'s tool call is felt over the conversation\'s edit hold, which then carries on', same(felt(t), [6, 10, 6]) && !stopped(), `(${felt(t)})`);
+t = Date.now();
+await send({ event: 'agent.complete', agent: 'agent-3', reason: 'answer' });
+await sleep(450);
+expect('…and so is the end of its run', same(felt(t), [14, 6]) && !stopped(), `(${felt(t)})`);
+t = Date.now();
+await send({ event: 'tool.started', id: 'q6', tool: 'Edit', agent: 'agent-4' });
+await sleep(200);
+await send({ event: 'tool.finished', id: 'q4', tool: 'Edit', status: 'completed' });
+await sleep(450);
+expect('a subagent\'s edit hold carries on when the conversation\'s ends', same(felt(t), [6, 14, 6]) && !stopped(), `(${felt(t)})`);
+t = Date.now();
+await send({ event: 'turn.complete', reason: 'aborted' });
+await sleep(700);
+expect('…and when the turn is interrupted, which is felt over it', same(felt(t).slice(-6), [20, 6, 20, 6, 20, 6]) && !stopped(), `(${felt(t)})`);
+t = Date.now();
+await send({ event: 'agent.complete', agent: 'agent-4', reason: 'aborted' });
+await sleep(500);
+expect('…until its own run ends', same(levels(t), [20]) && stopped(), `(${levels(t)})`);
+
+// A subagent in the foreground is interrupted with its turn, and that is felt
+// as the turn's ending: the pulse of a run cut short, or of the call it was in
+// the middle of, is as strong and would run the ending's three into one.
+const endsInThree = (since) => {
+  const ending = stretches(since).filter((stretch) => stretch.value === 20);
+  return ending.length === 3 && ending.every((stretch) => stretch.ms >= 80 && stretch.ms <= 200) && stopped();
+};
+const timed = (since) => `(${stretches(since).map((stretch) => `${stretch.value} for ${stretch.ms}ms`).join(', ')})`;
+await send({ event: 'tool.started', id: 'q10', tool: 'Agent' }, { event: 'tool.started', id: 'q11', tool: 'Bash', agent: 'agent-6' });
+await sleep(300);
+t = Date.now();
+await send(
+  { event: 'tool.finished', id: 'q11', tool: 'Bash', status: 'error', agent: 'agent-6' },
+  { event: 'agent.complete', agent: 'agent-6', reason: 'aborted' },
+  { event: 'tool.finished', id: 'q10', tool: 'Agent', status: 'error' },
+  { event: 'turn.complete', reason: 'aborted' },
+);
+await sleep(700);
+expect('a turn interrupted with a subagent in the foreground ends in its three pulses', endsInThree(t), timed(t));
+await send({ event: 'tool.started', id: 'q12', tool: 'Agent' }, { event: 'tool.started', id: 'q13', tool: 'Bash', agent: 'agent-6' });
+await sleep(300);
+t = Date.now();
+await send(
+  { event: 'tool.finished', id: 'q12', tool: 'Agent', status: 'error' },
+  { event: 'turn.complete', reason: 'aborted' },
+  { event: 'tool.finished', id: 'q13', tool: 'Bash', status: 'error', agent: 'agent-6' },
+  { event: 'agent.complete', agent: 'agent-6', reason: 'aborted' },
+);
+await sleep(700);
+expect('…whichever of the two is heard of first', endsInThree(t), timed(t));
+await send({ event: 'tool.started', id: 'q14', tool: 'Agent' }, { event: 'text.started', id: 'q15', agent: 'agent-6' });
+await sleep(300);
+t = Date.now();
+await send({ event: 'tool.finished', id: 'q14', tool: 'Agent', status: 'error' }, { event: 'turn.complete', reason: 'aborted' });
+await sleep(250);
+await send({ event: 'agent.complete', agent: 'agent-6', reason: 'aborted' });
+await sleep(600);
+expect('…and when the run ends while the ending plays', endsInThree(t), timed(t));
+
+// That much is guessed at, from what fails while the ending plays. Where the
+// hooks module said which call started a subagent nothing is: it is in the
+// foreground for as long as that call runs, and is cut short with it.
+const starts = (id, agent) => [{ event: 'tool.started', id, tool: 'Agent' }, { event: 'agent.started', agent, id }];
+const longest = (since) => Math.max(0, ...stretches(since).filter((stretch) => stretch.value === 20).map((stretch) => stretch.ms));
+await send(...starts('q18', 'agent-8'), { event: 'tool.started', id: 'q19', tool: 'Bash', agent: 'agent-8' });
+await sleep(300);
+t = Date.now();
+await send({ event: 'tool.finished', id: 'q18', tool: 'Agent', status: 'error' }, { event: 'turn.complete', reason: 'aborted' });
+await sleep(110);
+await send({ event: 'tool.finished', id: 'q19', tool: 'Bash', status: 'error', agent: 'agent-8' });
+await sleep(700);
+await send({ event: 'agent.complete', agent: 'agent-8', reason: 'aborted' });
+await sleep(500);
+expect('a subagent cut short with the call that started it is not felt failing, however late that is heard of', endsInThree(t), timed(t));
+await send(...starts('q20', 'agent-8'), { event: 'tool.started', id: 'q21', tool: 'Edit', agent: 'agent-8' });
+await sleep(300);
+t = Date.now();
+await send({ event: 'turn.complete', reason: 'aborted' });
+await sleep(700);
+await send({ event: 'agent.complete', agent: 'agent-8', reason: 'aborted' });
+await sleep(500);
+expect('…nor when the call never says it finished: its edit hold stops with the turn', endsInThree(t) && !felt(t).includes(6), timed(t));
+await send(...starts('q26', 'agent-8'));
+await sleep(300);
+t = Date.now();
+await send({ event: 'tool.finished', id: 'q26', tool: 'Agent', status: 'error' }, { event: 'turn.complete', reason: 'aborted' });
+await sleep(700);
+await send({ event: 'agent.complete', agent: 'agent-8', reason: 'aborted' });
+await sleep(500);
+expect('…nor when nothing had been heard of it but its start', endsInThree(t), timed(t));
+await send(...starts('q22', 'agent-9'), { event: 'tool.finished', id: 'q22', tool: 'Agent', status: 'completed' });
+await sleep(450);
+t = Date.now();
+await send({ event: 'turn.complete', reason: 'aborted' });
+await sleep(100);
+await send({ event: 'agent.complete', agent: 'agent-9', reason: 'error' });
+await sleep(800);
+expect('one whose call is over is in the background: failing while an interrupted turn ends, it is felt', longest(t) >= 250 && stopped(), timed(t));
+t = Date.now();
+await send({ event: 'turn.complete', reason: 'answer' });
+await sleep(100);
+await send({ event: 'agent.complete', agent: 'agent-10', reason: 'error' });
+await sleep(800);
+expect('…and so is one the daemon was told nothing of, while a turn that was not cut short ends', longest(t) >= 250 && stopped(), timed(t));
+
+// A subagent's todos are its own from one run to the next: a teammate takes
+// turns, and a subagent can be woken under the id it had.
+const writesTodos = async (id) => {
+  await send({ event: 'tool.started', id, tool: 'TodoWrite', agent: 'agent-7' });
+  await sleep(300);
+  t = Date.now();
+  await send({ event: 'tool.finished', id, tool: 'TodoWrite', status: 'completed', agent: 'agent-7', ...todos('completed') });
+  await sleep(450);
+};
+await writesTodos('q16');
+expect('a subagent\'s newly completed todo is felt as the conversation\'s is', same(levels(t), [16, 14]) && stopped(), `(${levels(t)})`);
+await send({ event: 'agent.complete', agent: 'agent-7', reason: 'answer' });
+await sleep(450);
+await writesTodos('q17');
+expect('…but only once, its next run included', same(levels(t), [14]) && stopped(), `(${levels(t)})`);
+// The tasks are one list, the conversation's and its subagents' alike.
+await send({ event: 'tool.started', id: 'q23', tool: 'TaskUpdate', agent: 'agent-7' });
+await sleep(300);
+t = Date.now();
+await send({ event: 'tool.finished', id: 'q23', tool: 'TaskUpdate', status: 'completed', agent: 'agent-7', todo: { key: '9', status: 'completed' } });
+await sleep(450);
+expect('a task a subagent completes is felt as the conversation\'s is', same(levels(t), [16, 14]) && stopped(), `(${levels(t)})`);
+t = Date.now();
+await send({ event: 'tool.finished', id: 'q24', tool: 'TaskUpdate', status: 'completed', todo: { key: '9', status: 'completed' } });
+await sleep(450);
+expect('…once, whoever says so again', same(levels(t), [14]) && stopped(), `(${levels(t)})`);
+await send({ event: 'agent.complete', agent: 'agent-7', reason: 'answer' });
+await sleep(450);
+
+// What was still on its way when a subagent's run ended is no one's to feel.
+await send({ event: 'tool.started', id: 'q8', tool: 'Edit' }, { event: 'tool.started', id: 'q9', tool: 'Bash', agent: 'agent-5' });
+await sleep(300);
+await send({ event: 'agent.complete', agent: 'agent-5', reason: 'aborted' });
+await sleep(500);
+t = Date.now();
+await send(
+  { event: 'tool.finished', id: 'q9', tool: 'Bash', status: 'error', agent: 'agent-5' },
+  { event: 'text.ended', id: 'q9t', agent: 'agent-5' },
+);
+await sleep(500);
+expect('a subagent\'s call that ends after its run is not felt, and leaves the conversation\'s edit hold', felt(t).length === 0 && !stopped(), `(${felt(t)})`);
+t = Date.now();
+await send({ event: 'tool.finished', id: 'q8', tool: 'Edit', status: 'completed' });
+await sleep(450);
+expect('…which ends with its own call', same(levels(t), [14]) && stopped(), `(${levels(t)})`);
+
+// A prompt is told by its rhythm: what another subagent says is not played into it.
+await send({ event: 'tool.started', id: 'q2', tool: 'Bash', agent: 'agent-1' }, { event: 'permission.asked', id: 'q2' });
+await sleep(300);
+t = Date.now();
+for (let i = 0; i < 12; i++) {
+  await send(says('q3', 'agent-2', 40), { event: 'output.snapshot', id: `q3s${i}`, agent: 'agent-3' });
+  await sleep(100);
+}
+expect('a waiting prompt is not played over by what another subagent says, streamed or whole', levels(t).includes(17) && levels(t).every((v) => v === 17), `(${levels(t)})`);
+await send({ event: 'tool.finished', id: 'q2', tool: 'Bash', status: 'completed', agent: 'agent-1' });
+await sleep(450);
+t = Date.now();
+await send(says('q3', 'agent-2', 40));
+await sleep(200);
+expect('…which is felt again once the prompt is answered, as hard as it has been coming', same(levels(t), [16]) && stopped(), `(${levels(t)})`);
+await send({ event: 'agent.complete', agent: 'agent-3', reason: 'answer' });
+await sleep(450);
+await send({ event: 'agent.complete', agent: 'agent-2', reason: 'answer' });
+await sleep(450);
+
+// A prompt says whose it is: one for a call the daemon never saw start (it
+// started since) is still its subagent's, and is over with the call.
+await send({ event: 'permission.asked', id: 'q25', agent: 'agent-11' });
+await sleep(400);
+t = Date.now();
+await send({ event: 'tool.finished', id: 'q25', tool: 'Bash', status: 'completed', agent: 'agent-11' });
+await sleep(450);
+expect('a subagent\'s prompt for a call the daemon never saw start ends with the call', same(levels(t).slice(-1), [14]), `(${levels(t)})`);
+t = Date.now();
+await sleep(1200);
+expect('…and stops asking', levels(t).length === 0 && stopped(), `(${levels(t)})`);
+await send({ event: 'agent.complete', agent: 'agent-11', reason: 'answer' });
+await sleep(450);
+
+// A session's end is the end of its subagents' loops too.
+await other({ event: 'session.start' }, { event: 'tool.started', id: 'q7', tool: 'Bash', agent: 'agent-1' }, { event: 'permission.asked', id: 'q7' });
+await sleep(400);
+t = Date.now();
+await other({ event: 'agent.complete', agent: 'agent-2', reason: 'aborted' }, { event: 'session.end', reason: 'other' });
+await sleep(150);
+expect('a session that ends cuts short the pulse of a subagent\'s run that just ended', felt(t).includes(20) && stopped(), `(${felt(t)})`);
+t = Date.now();
+await sleep(1200);
+expect('…and stops what its other subagents were playing', levels(t).length === 0 && stopped(), `(${levels(t)})`);
 
 const cmd = async (body) =>
   (await fetch(url('/cmd'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();

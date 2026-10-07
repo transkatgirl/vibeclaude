@@ -19,7 +19,8 @@ export class CoTHandler {
     this.idleStopMs = idleStopMs;
   }
 
-  onTextDelta(charCount) {
+  /** `isFelt` false: the characters count towards the speed, and nothing is played. */
+  onTextDelta(charCount, isFelt = true) {
     if (!this.active) return;
     if (charCount <= 0) return;
     if (this.holding) {
@@ -27,6 +28,7 @@ export class CoTHandler {
       return;
     }
     this.tpsMonitor.record(charCount);
+    if (!isFelt) return;
     const intensity = this.tpsMonitor.intensityFromTPS(this.tpsMonitor.getTPS());
     this.engine.play({ source: this.source, intensity, duration: TEXT_PULSE_DURATION });
     this.resetIdleTimer();

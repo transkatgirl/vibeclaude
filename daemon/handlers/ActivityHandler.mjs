@@ -11,11 +11,16 @@ export const isFileMutationTool = (tool) =>
   tool === 'Edit' || tool === 'Write' || tool === 'MultiEdit' || tool === 'NotebookEdit';
 
 export class ActivityHandler {
-  todoStatuses = new Map();
   toolStatuses = new Map();
 
-  constructor(engine) {
+  /**
+   * `taskStatuses`: what the tasks have come to, where the list is not this handler's alone.
+   * `todoStatuses`: what the todos had come to before, where they are not new to this handler.
+   */
+  constructor(engine, taskStatuses = new Map(), todoStatuses = new Map()) {
     this.engine = engine;
+    this.taskStatuses = taskStatuses;
+    this.todoStatuses = todoStatuses;
   }
 
   onToolUpdated(callID, tool, status) {
@@ -37,6 +42,15 @@ export class ActivityHandler {
       return;
     }
 
+    this.playResult(status);
+  }
+
+  /** A subagent's run ended, 'completed' or in 'error': felt as a tool call's result is. */
+  onAgentCompleted(status) {
+    this.playResult(status);
+  }
+
+  playResult(status) {
     if (status === 'completed') {
       this.engine.play({
         source: 'tool',
@@ -76,8 +90,8 @@ export class ActivityHandler {
 
   /** A single item changed status (task tools report one item at a time). */
   onTodoUpdated(key, status) {
-    const previous = this.todoStatuses.get(key);
-    this.todoStatuses.set(key, status);
+    const previous = this.taskStatuses.get(key);
+    this.taskStatuses.set(key, status);
     if (status === 'completed' && previous !== 'completed') this.playTodoCompleted();
   }
 

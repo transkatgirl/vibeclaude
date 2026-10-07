@@ -11,6 +11,8 @@ export class VibrationEngine {
   pending = new Map();
   isDraining = false;
   draining = null;
+  // Whoever is waiting for what is playing to stop.
+  settling = [];
 
   constructor(connector) {
     this.connector = connector;
@@ -60,11 +62,18 @@ export class VibrationEngine {
     if (this.deviceIndex !== null) {
       this.stopDevice();
     }
+    for (const resolve of this.settling.splice(0)) resolve();
   }
 
   /** Resolves once every command asked for so far has been sent. */
   flush() {
     return this.draining ?? Promise.resolve();
+  }
+
+  /** Resolves once nothing is playing and its stop has been sent: a pulse is left to end by itself. */
+  async settle() {
+    if (this.activeSource !== null) await new Promise((resolve) => this.settling.push(resolve));
+    await this.flush();
   }
 
   cancelStopTimer() {

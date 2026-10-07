@@ -91,6 +91,12 @@ const asked = new Set<string>()
 // leave these as they are: they go when the call finishes or its subagent's
 // run ends.
 const agentCalls = new Map<string, string>()
+/** Whose call it is, for the daemon: a subagent's is its subagent's there, its prompt included. */
+const whoseCall = (id: string) => {
+  const agent = agentCalls.get(id)
+
+  return agent === undefined ? {} : { agent }
+}
 const forgetTurnCalls = () => {
   for (const id of [...mayAsk.keys(), ...asked]) {
     if (agentCalls.has(id)) continue
@@ -408,8 +414,9 @@ export const register: Register = (on, options) => {
   on('turn.complete', ($, e, next) => {
     // A subagent's run ending is not the turn ending, but it is the end of
     // that subagent's calls: one that never said it finished is over too. The
-    // daemon is told either way, since it may know of calls this module has
-    // forgotten (a reload starts the module over).
+    // daemon is told either way, and how the run ended: it is felt there, and
+    // the daemon may know of calls this module has forgotten (a reload starts
+    // the module over).
     if (e.agentId === undefined) {
       forgetTurnCalls()
       emit($, { event: 'turn.complete', reason: e.reason })
@@ -420,7 +427,7 @@ export const register: Register = (on, options) => {
         mayAsk.delete(id)
         asked.delete(id)
       }
-      emit($, { event: 'agent.complete', agent: e.agentId })
+      emit($, { event: 'agent.complete', agent: e.agentId, reason: e.reason })
     }
 
     return next(e)
@@ -428,11 +435,15 @@ export const register: Register = (on, options) => {
 
   // The model's response, piece by piece. Thinking and text are felt as they
   // stream; a tool call is felt from the moment the model starts writing it.
+  // A subagent's response is felt as the conversation's own is.
   on('turn.step', async function* ($, e, next) {
-    // A subagent's tool calls are felt like any others; what it thinks and
-    // says is not the conversation's.
-    const isMain = e.agentId === undefined
-    const step = `${e.turnId}:${e.index}`
+    // Whose response it is, for the daemon: a subagent's is played apart from
+    // the conversation's, goes on past the end of the turn that started it,
+    // and ends with its own run.
+    const whose = e.agentId === undefined ? {} : { agent: e.agentId }
+    // A subagent's run counts its steps as a turn does: its blocks are named
+    // for it too, so that no two loops' share an ID.
+    const step = `${e.agentId === undefined ? '' : `${e.agentId}:`}${e.turnId}:${e.index}`
     let open = null as { kind: 'reasoning' | 'text' | 'tool.input'; id: string; chars: number } | null
     let isLive = false
 
@@ -440,7 +451,7 @@ export const register: Register = (on, options) => {
     // the next one beginning or the response stopping.
     const close = () => {
       if (open === null) return
-      emit($, { event: `${open.kind}.ended`, id: open.id })
+      emit($, { event: `${open.kind}.ended`, id: open.id, ...whose })
       open = null
     }
     const enter = (kind: 'reasoning' | 'text' | 'tool.input', id: string) => {
@@ -454,22 +465,17 @@ export const register: Register = (on, options) => {
     try {
       for await (const chunk of stream) {
         if (chunk.kind === 'thinking' || chunk.kind === 'text') {
-          if (!isMain) {
-            // Not felt, but a new block all the same: the call before it is written.
-            if (open?.kind === 'tool.input') close()
-          } else {
-            const kind = chunk.kind === 'thinking' ? 'reasoning' : 'text'
-            const id = `${step}:${chunk.index}`
-            // The engine keeps thinking's text to itself where no one is shown
-            // it: the chunks still come, empty, and nothing is felt.
-            if (enter(kind, id).chars++ === 0) emit($, { event: `${kind}.started`, id })
-            if (chunk.text.length > 0) emit($, { event: `${kind}.delta`, id, chars: chunk.text.length })
-            // A block that has started makes the response live, text or not.
-            isLive = true
-          }
+          const kind = chunk.kind === 'thinking' ? 'reasoning' : 'text'
+          const id = `${step}:${chunk.index}`
+          // The engine keeps thinking's text to itself where no one is shown
+          // it: the chunks still come, empty, and nothing is felt.
+          if (enter(kind, id).chars++ === 0) emit($, { event: `${kind}.started`, id, ...whose })
+          if (chunk.text.length > 0) emit($, { event: `${kind}.delta`, id, chars: chunk.text.length, ...whose })
+          // A block that has started makes the response live, text or not.
+          isLive = true
         } else if (chunk.kind === 'tool') {
           if (enter('tool.input', chunk.id).chars++ === 0) {
-            emit($, { event: 'tool.input.started', id: chunk.id, tool: chunk.name })
+            emit($, { event: 'tool.input.started', id: chunk.id, tool: chunk.name, ...whose })
           }
         } else if (chunk.kind === 'stop') {
           // A block's end is one of the engine's own items, which cannot be
@@ -489,27 +495,47 @@ export const register: Register = (on, options) => {
     // was live: one that streamed anything, thinking included, has been felt.
     // The response's text is the one part that can arrive whole: thinking
     // reaches a plugin only as it streams.
-    if (isMain && !isLive && response.answer.length > 0) {
-      emit($, { event: 'output.snapshot', id: `${step}:answer` })
+    if (!isLive && response.answer.length > 0) {
+      emit($, { event: 'output.snapshot', id: `${step}:answer`, ...whose })
     }
 
     return response
   })
+
+  // Subagents ----------------------------------------------------------------
+
+  // Which call started a subagent, once it has started. For as long as that
+  // call runs the subagent is in the foreground, and what cuts the call short
+  // (an interrupt) cuts the subagent short with it: the daemon, told which
+  // call it was, does not have to guess at that.
+  //
+  // It only watches: one that fails lets the subagent start as it would have.
+  on('agent.spawn', async ($, e, next) => {
+    const started = await next(e)
+    if (started.agentId !== undefined) {
+      emit($, { event: 'agent.started', agent: started.agentId, id: e.tool_use_id })
+    }
+
+    return started
+  }).catch(($, e, next) => next(e))
 
   // Tools --------------------------------------------------------------------
 
   on('tool.call', async ($, e, next) => {
     const id = e.tool_use_id
     const tool = String(e.tool)
+    // Whose call it is, at its end as at its start: one that ends after its
+    // subagent's run has is told from the conversation's own.
+    const whose = e.agentId === undefined ? {} : { agent: e.agentId }
     if (e.agentId !== undefined) agentCalls.set(id, e.agentId)
-    emit($, { event: 'tool.started', id, tool, ...(e.agentId === undefined ? {} : { agent: e.agentId }) })
+    emit($, { event: 'tool.started', id, tool, ...whose })
 
     const finish = (status: 'completed' | 'error') => {
       agentCalls.delete(id)
       mayAsk.delete(id)
       asked.delete(id)
       const update = status === 'completed' ? todoUpdate(tool, e as Record<string, unknown>) : {}
-      emit($, { event: 'tool.finished', id, tool, status, ...update })
+      emit($, { event: 'tool.finished', id, tool, status, ...update, ...whose })
     }
 
     try {
@@ -548,7 +574,7 @@ export const register: Register = (on, options) => {
     if (id !== undefined) {
       mayAsk.delete(id)
       asked.add(id)
-      emit($, { event: 'permission.asked', id })
+      emit($, { event: 'permission.asked', id, ...whoseCall(id) })
     }
 
     return next(e)
@@ -562,7 +588,7 @@ export const register: Register = (on, options) => {
     const id = e.props.tool_use_id
     // A running call is past its permission check, prompt or none.
     mayAsk.delete(id)
-    if (asked.delete(id)) emit($, { event: 'permission.replied', id })
+    if (asked.delete(id)) emit($, { event: 'permission.replied', id, ...whoseCall(id) })
 
     return next(e)
   })
