@@ -24,7 +24,7 @@ Claude Code ──hooks module──HTTP──▶ daemon ──WebSocket──�
 ## Install
 
 ```bash
-git clone <this repo> ~/.claude/vibeclaude
+git clone https://github.com/transkatgirl/vibeclaude.git ~/.claude/vibeclaude
 cd ~/.claude/vibeclaude && npm install
 ```
 
