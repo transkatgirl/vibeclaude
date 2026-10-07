@@ -322,10 +322,10 @@ export function createPlugin({ wsAddress, kv, notify }) {
     const saved = savedDevice();
     if (!saved) return;
 
-    const device = findSavedDevice(
-      (await scan()).filter((candidate) => candidate.supportsVibration),
-      saved,
-    );
+    const devices = (await scan()).filter((candidate) => candidate.supportsVibration);
+    // Gone while it scanned: lost, which was said, or disconnected on purpose.
+    if (!connector.connected) return;
+    const device = findSavedDevice(devices, saved);
     if (!device) {
       notify(`Previously selected device is unavailable: ${saved.name}`, 'warning');
       return;
@@ -397,14 +397,18 @@ export function createPlugin({ wsAddress, kv, notify }) {
   };
 
   const disconnect = async () => {
+    // Asked for, with or without a connection to end: nothing connects by
+    // itself until a command does. One still being made is ended with it.
+    isDisconnectedOnPurpose = true;
+    const hadConnection = connector.connected || connector.connecting;
     try {
-      if (!connector.connected) return { message: 'Not connected' };
-      isDisconnectedOnPurpose = true;
       stopAll();
       await connector.disconnect();
       listedIndexes = new Set();
       isDeviceLost = false;
-      return { message: 'Disconnected' };
+      return {
+        message: hadConnection ? 'Disconnected' : 'Not connected; staying disconnected until /intiface or /intiface-connect',
+      };
     } catch (e) {
       return { error: 'Disconnect failed: ' + String(e) };
     }
@@ -457,6 +461,8 @@ export function createPlugin({ wsAddress, kv, notify }) {
         }
       })
       .catch((e) => {
+        // Disconnected on purpose while it was connecting: as asked, not a failure.
+        if (isDisconnectedOnPurpose) return;
         autoConnectFailedAt = Date.now();
         notify('Auto-connect failed: ' + String(e), 'warning');
       })

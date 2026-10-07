@@ -45,6 +45,10 @@ const NOTICE_WAIT_MS = 10_000;
 const NOTICE_REPEAT_MS = 1000;
 // How long shutting down may take before the daemon exits anyway.
 const SHUTDOWN_TIMEOUT_MS = 5000;
+// How long the port is given to come free when a daemon on its way out still
+// holds it: longer than its shutdown may take.
+const LISTEN_RETRY_MS = 500;
+const LISTEN_ATTEMPTS = 12;
 // session.end reasons where the same Claude Code carries straight on with
 // another session, so the plugin stays loaded.
 const HANDOVER_REASONS = new Set(['clear', 'resume']);
@@ -85,6 +89,18 @@ const isRunning = (pid) => {
 function log(...a) {
   console.log(`[${new Date().toISOString()}] ${a.join(' ')}`);
 }
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Resolves once `server` listens on the loopback port; rejects with the error if it cannot. */
+const listen = (server, port) =>
+  new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
 
 const readBody = (req) =>
   new Promise((resolve) => {
@@ -242,6 +258,9 @@ async function runDaemon() {
     if (req.method === 'POST' && !/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
       return reply({ error: 'unsupported media type' }, 415);
     }
+    // On its way out, it is no one's daemon: a session that asks now starts
+    // another, which waits for this one to go, and sends its events there.
+    if (stopping) return reply({ error: 'the daemon is stopping' }, 503);
     lastActivityAt = Date.now();
 
     if (req.method === 'GET' && url.pathname === '/notices') {
@@ -280,14 +299,28 @@ async function runDaemon() {
     }
     reply({ error: 'not found' }, 404);
   });
-  server.on('error', (e) => {
-    if (e.code === 'EADDRINUSE') {
-      log(`port ${cfg.port} is in use: another daemon is probably running. Exiting.`);
-      process.exit(0);
+  // The port may still be a leaving daemon's (the last session ended as this
+  // one's first began): wait for it to go. One that answers is here to stay,
+  // and this one is not needed.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await listen(server, cfg.port);
+      break;
+    } catch (e) {
+      if (e?.code !== 'EADDRINUSE') throw e;
+      if ((await request({ cmd: 'ping' }, 400))?.ok === true) {
+        log(`port ${cfg.port} is in use: another daemon is running. Exiting.`);
+        process.exit(0);
+      }
+      if (attempt >= LISTEN_ATTEMPTS) {
+        log(`port ${cfg.port} is in use and nothing on it answers as a daemon. Exiting.`);
+        process.exit(1);
+      }
+      if (attempt === 0) log(`port ${cfg.port} is in use by a daemon that is stopping; waiting for it`);
+      await sleep(LISTEN_RETRY_MS);
     }
-    log('http error', e.message);
-  });
-  await new Promise((res) => server.listen(cfg.port, '127.0.0.1', res));
+  }
+  server.on('error', (e) => log('http error', e.message));
 
   plugin.start();
 
@@ -410,7 +443,7 @@ switch (mode) {
     await command({ cmd: mode }, 10_000, ({ message }) => console.log(`Intiface: ${message}`));
     break;
   case 'status': {
-    const up = await request({ cmd: 'ping' }, 500);
+    const up = (await request({ cmd: 'ping' }, 500))?.ok === true;
     console.log(up ? `daemon is running (http 127.0.0.1:${cfg.port})` : 'daemon is not running');
     process.exit(up ? 0 : 1);
   }

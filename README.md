@@ -149,7 +149,8 @@ as toasts.
 A hooks module has no Node, so it cannot run the `buttplug` client or hold a WebSocket.
 `daemon/daemon.mjs` holds everything else: the connection to Intiface Central through the official `buttplug`
 client, the selected device, and the vibration engine and its handlers, which are the
-original plugin's. The first session starts it; it exits when the last session ends
+original plugin's. A device answers slower than a response streams, so it is sent the
+latest level asked of it, never a backlog. The first session starts it; it exits when the last session ends
 (`/clear` and resuming hand over to the next session instead). It also watches the Claude
 Code process behind each session, and ends the session of one that went away without saying
 so. Only where it cannot tell which process that is does it fall back to exiting after 30

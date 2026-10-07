@@ -176,13 +176,16 @@ const drain = async ($: EngineInterface) => {
   }
 }
 
-const flush = ($: EngineInterface): Promise<void> =>
-  (sending ??= drain($)
-    .catch(() => {})
-    .finally(() => {
-      sending = null
-      if (queue.length > 0) void flush($)
-    }))
+/** Resolves once everything queued so far has been sent, or given up on: what is queued as a drain ends is drained too. */
+const flush = async ($: EngineInterface): Promise<void> => {
+  while (queue.length > 0 || sending !== null) {
+    await (sending ??= drain($)
+      .catch(() => {})
+      .finally(() => {
+        sending = null
+      }))
+  }
+}
 
 const emit = ($: EngineInterface, event: DaemonEvent) => {
   queue.push(sessionID === null ? event : { session: sessionID, ...event })

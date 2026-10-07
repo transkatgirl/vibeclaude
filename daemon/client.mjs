@@ -60,13 +60,20 @@ export function startDaemon() {
   }
 }
 
-/** Make sure a daemon is answering, starting one if needed and giving it `attempts` x 250ms to come up. */
-export async function ensureDaemon(attempts = 20) {
-  if (await request({ cmd: 'ping' }, 400)) return true;
+/** A daemon answers, and is not on its way out. */
+const isUp = async () => (await request({ cmd: 'ping' }, 400))?.ok === true;
+
+/**
+ * Make sure a daemon is answering, starting one if needed and giving it
+ * `timeoutMs` to come up: time enough for one that is leaving to free the port first.
+ */
+export async function ensureDaemon(timeoutMs = 10_000) {
+  if (await isUp()) return true;
   startDaemon();
-  for (let attempt = 0; attempt < attempts; attempt++) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     await sleep(250);
-    if (await request({ cmd: 'ping' }, 400)) return true;
+    if (await isUp()) return true;
   }
   return false;
 }

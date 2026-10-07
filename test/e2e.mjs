@@ -2,6 +2,7 @@
 //   node test/e2e.mjs
 import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
+import net from 'node:net';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,23 @@ const home = mkdtempSync(join(tmpdir(), 'vibeclaude-e2e-'));
 writeFileSync(join(home, 'config.json'), JSON.stringify({ wsAddress: `ws://127.0.0.1:${WS_PORT}`, port: HTTP_PORT }));
 const HOME = ['--home', home];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Nothing of an earlier run may hold a port: the daemon exits when its port
+// is taken, and the suite would go on against whatever has it.
+const isPortTaken = (port) =>
+  new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => resolve(false));
+  });
+for (const port of [WS_PORT, HTTP_PORT]) {
+  if (await isPortTaken(port)) {
+    console.error(`port ${port} is in use (a daemon or mock of an earlier run?); stop it first: lsof -nP -iTCP:${port}`);
+    process.exit(2);
+  }
+}
 
 let mock = startMock(WS_PORT, { log: () => {} });
 
@@ -66,6 +84,10 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const began = Date.now();
 let daemon = startDaemon();
 await sleep(1000); // daemon connects to mock
+if (daemon.exitCode !== null) {
+  console.error(`the daemon exited (${daemon.exitCode}) as it started; see its log above`);
+  process.exit(2);
+}
 
 // Device selection ------------------------------------------------------------
 let t = Date.now();
@@ -193,6 +215,46 @@ await send({ event: 'output.snapshot', id: 's1' });
 await sleep(300);
 expect('…once for that part', same(levels(t), [8]), `(${levels(t)})`);
 
+// A slow device ------------------------------------------------------------------
+// One that takes a while to answer is sent the latest level, not every one in
+// turn; one that leaves mid-stream is not told what was on its way to it.
+mock.setReplyDelay(40);
+t = Date.now();
+await send({ event: 'text.started', id: 'm2' });
+for (let i = 0; i < 60; i++) {
+  await send({ event: 'text.delta', id: 'm2', chars: 4 });
+  await sleep(15);
+}
+await send({ event: 'text.ended', id: 'm2' });
+const ended = Date.now();
+await sleep(400);
+const slow = mock.outputs.filter((o) => o.t >= t);
+expect(
+  'a fast stream to a slow device is not queued up',
+  slow.length < 40 && stopped() && slow.at(-1).t - ended < 200,
+  `(${slow.length} commands; stop ${slow.at(-1)?.t - ended}ms after the end)`,
+);
+mark = Date.now();
+await send({ event: 'text.started', id: 'm3' });
+for (let i = 0; i < 10; i++) {
+  await send({ event: 'text.delta', id: 'm3', chars: 4 });
+  await sleep(15);
+}
+mock.setDevicePresent(false);
+for (let i = 0; i < 10; i++) {
+  await send({ event: 'text.delta', id: 'm3', chars: 4 });
+  await sleep(15);
+}
+await send({ event: 'text.ended', id: 'm3' });
+await sleep(300);
+seen = await notices(`since=${mark}`);
+expect('a device that leaves mid-stream is not told what was on its way', same(seen, ['Device disconnected: Mock Vibe 3000']), `(${seen})`);
+mock.setReplyDelay(0);
+mock.setDevicePresent(true);
+await sleep(300);
+seen = await notices(`since=${mark}`);
+expect('…and is selected again when it is back', seen.includes('Restored Mock Vibe 3000'), `(${seen})`);
+
 // Thinking -----------------------------------------------------------------------
 t = Date.now();
 await send({ event: 'reasoning.started', id: 'r0' });
@@ -241,7 +303,8 @@ await sleep(450);
 await send({ event: 'tool.started', id: 'a4c', tool: 'Bash' });
 await sleep(300);
 await send({ event: 'permission.asked', id: 'a4c' });
-await sleep(400);
+// Between its bursts: a pulse of one still on its way would take the failure pulse's place.
+await sleep(700);
 t = Date.now();
 await send({ event: 'tool.finished', id: 'a4c', tool: 'Bash', status: 'error' }, { event: 'turn.complete', reason: 'aborted' });
 await sleep(700);
@@ -495,6 +558,19 @@ await sendAs('third', process.pid, { event: 'session.start' });
 await sleep(500);
 r = await cmd({ cmd: 'state' });
 expect('…but not after a disconnect that was asked for', r.connected === false, `(${JSON.stringify(r)})`);
+r = await cli('connect');
+expect('a connect asked for turns that back on', r.stdout.includes('Intiface: Connected'), `(${r.stdout.trim()})`);
+mock.drop();
+await mock.close();
+await sleep(300);
+r = await cli('disconnect');
+expect('a disconnect asked for with nothing to disconnect', r.stdout.includes('Intiface: Not connected'), `(${r.stdout.trim()})`);
+mock = startMock(WS_PORT, { log: () => {} });
+await sleep(300);
+await sendAs('fourth', process.pid, { event: 'session.start' });
+await sleep(500);
+r = await cmd({ cmd: 'state' });
+expect('…still keeps a session that starts later from connecting', r.connected === false, `(${JSON.stringify(r)})`);
 
 // An Intiface that opens the socket and says nothing -------------------------------------
 mock.setAnswering(false);
@@ -503,8 +579,21 @@ await sleep(500);
 r = await cmd({ cmd: 'state' });
 expect('a connection is not one until the server has answered', r.connected === false, `(${JSON.stringify(r)})`);
 await cli('stop');
-await sleep(6500);
-expect('…and waiting on it does not keep the daemon from stopping', daemon.exitCode === 0, `(exit ${daemon.exitCode})`);
+// Leaving takes it a few seconds (it waits on that connection), during which the port is still its.
+await sleep(300);
+r = await cli('status');
+expect('a daemon on its way out says it is not running', r.code === 1, `(${r.stdout.trim()})`);
+mock.setAnswering(true);
+r = await cli('start');
+expect(
+  '…and start waits for it to go before bringing up another',
+  r.code === 0 && daemon.exitCode === 0,
+  `(${r.stdout.trim()}; exit ${daemon.exitCode})`,
+);
+await cli('stop');
+await sleep(1500);
+r = await cli('status');
+expect('…which stops as asked', r.code === 1, `(${r.stdout.trim()})`);
 mock.drop();
 await mock.close();
 rmSync(home, { recursive: true, force: true });

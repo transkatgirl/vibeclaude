@@ -4,7 +4,13 @@ export class VibrationEngine {
   deviceIndex = null;
   activeSource = null;
   stopTimer = null;
-  commandChain = Promise.resolve();
+  // The level each device is to be sent next, by index, while a command is
+  // on its way: a device answers slower than a stream of deltas comes, so it
+  // is sent the latest level asked for, not every one in turn. A device being
+  // left (its stop) keeps its place ahead of the one selected after it.
+  pending = new Map();
+  isDraining = false;
+  draining = null;
 
   constructor(connector) {
     this.connector = connector;
@@ -56,9 +62,9 @@ export class VibrationEngine {
     }
   }
 
-  /** Resolves once every command queued so far has been sent. */
+  /** Resolves once every command asked for so far has been sent. */
   flush() {
-    return this.commandChain;
+    return this.draining ?? Promise.resolve();
   }
 
   cancelStopTimer() {
@@ -69,19 +75,38 @@ export class VibrationEngine {
   }
 
   vibrate(intensity) {
-    const deviceIndex = this.deviceIndex;
-    if (deviceIndex === null) return;
-    this.enqueue(() => this.connector.vibrate(deviceIndex, intensity));
+    if (this.deviceIndex === null) return;
+    this.send(this.deviceIndex, intensity);
   }
 
   stopDevice() {
-    const deviceIndex = this.deviceIndex;
-    if (deviceIndex === null) return;
-    this.enqueue(() => this.connector.stopDevice(deviceIndex));
+    if (this.deviceIndex === null) return;
+    this.send(this.deviceIndex, 0);
   }
 
-  enqueue(command) {
-    this.commandChain = this.commandChain.then(command, command);
+  send(index, intensity) {
+    this.pending.set(index, intensity);
+    if (!this.isDraining) this.draining = this.drain();
+  }
+
+  // Sends what is pending, one command at a time, until nothing is. Whether a
+  // drain is running is kept apart from its promise, and settled in the same
+  // tick as the loop: a command asked for as one ends is never left waiting.
+  async drain() {
+    this.isDraining = true;
+    try {
+      while (this.pending.size > 0) {
+        const [index, intensity] = this.pending.entries().next().value;
+        this.pending.delete(index);
+        try {
+          await (intensity > 0 ? this.connector.vibrate(index, intensity) : this.connector.stopDevice(index));
+        } catch {
+          // The connector reports its own failures.
+        }
+      }
+    } finally {
+      this.isDraining = false;
+    }
   }
 }
 

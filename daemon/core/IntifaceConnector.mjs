@@ -119,6 +119,11 @@ export class IntifaceConnector {
     return this.bpClient !== null && this.bpClient === this.established && this.bpClient.connected;
   }
 
+  /** A connection is being made: `disconnect` waits for it, then ends it. */
+  get connecting() {
+    return this.connectPromise !== null;
+  }
+
   /**
    * A command's answer, or its failure when none will come: buttplug leaves a
    * command pending for good if the connection goes or the server says nothing.

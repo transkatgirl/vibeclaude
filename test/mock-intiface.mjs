@@ -8,6 +8,8 @@ export function startMock(port = 12345, { log = console.log } = {}) {
   const outputs = []; // { t, value } every OutputCmd / StopCmd
   let isDevicePresent = true;
   let isAnswering = true;
+  // How long a device command takes to answer: a BLE device is not instant.
+  let replyDelayMs = 0;
   const deviceList = (Id) => ({
     DeviceList: {
       Id,
@@ -35,12 +37,22 @@ export function startMock(port = 12345, { log = console.log } = {}) {
   const setAnswering = (answers) => {
     isAnswering = answers;
   };
+  /** Device commands are answered this long after they arrive. */
+  const setReplyDelay = (ms) => {
+    replyDelayMs = ms;
+  };
   /** The connection goes, with whatever was unanswered left that way. */
   const drop = () => {
     for (const ws of wss.clients) ws.terminate();
   };
   wss.on('connection', (ws) => {
     const send = (m) => isAnswering && ws.send(JSON.stringify([m]));
+    /** A device's answer: after `replyDelayMs`, if the client is still there. */
+    const answer = (m) => {
+      if (!isAnswering) return;
+      if (replyDelayMs === 0) return ws.send(JSON.stringify([m]));
+      setTimeout(() => ws.readyState === ws.OPEN && ws.send(JSON.stringify([m])), replyDelayMs);
+    };
     ws.on('message', (data) => {
       let msgs;
       try {
@@ -62,13 +74,13 @@ export function startMock(port = 12345, { log = console.log } = {}) {
             const v = body.Command?.Vibrate?.Value;
             outputs.push({ t: Date.now(), value: v });
             log(`  motor → ${String(v).padStart(2)} / 20  ${'█'.repeat(v ?? 0)}`);
-            send({ Ok: { Id } });
+            answer({ Ok: { Id } });
             break;
           }
           case 'StopCmd':
             outputs.push({ t: Date.now(), value: 0, stop: true });
             log('  motor → stop');
-            send({ Ok: { Id } });
+            answer({ Ok: { Id } });
             break;
           default:
             send({ Ok: { Id } });
@@ -76,7 +88,7 @@ export function startMock(port = 12345, { log = console.log } = {}) {
       }
     });
   });
-  return { wss, outputs, setDevicePresent, setAnswering, drop, close: () => new Promise((r) => wss.close(r)) };
+  return { wss, outputs, setDevicePresent, setAnswering, setReplyDelay, drop, close: () => new Promise((r) => wss.close(r)) };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

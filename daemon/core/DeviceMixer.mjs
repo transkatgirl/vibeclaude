@@ -26,8 +26,9 @@ export class DeviceMixer {
     this.levels.set(channel, intensity);
     // Disconnected on purpose, the engines play on: there is nothing to send to.
     if (!this.connector.connected) return;
-    // A stop for a device that has gone is not the rest's to play there.
-    if (intensity === 0 && !this.connector.getDevice(index)) return;
+    // A device that has left: its stop is not the rest's to play there, and
+    // what was on its way to it when it left has nowhere to go.
+    if (!this.connector.getDevice(index)) return;
     const strongest = Math.max(...this.levels.values());
     if (strongest > 0) return this.connector.vibrate(index, strongest);
     return this.connector.stopDevice(index);
